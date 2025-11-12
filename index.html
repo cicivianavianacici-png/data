@@ -1,0 +1,334 @@
+<?php
+// Mulai session untuk menyimpan produk dan keranjang
+session_start();
+
+// Inisialisasi data jika belum ada
+if (!isset($_SESSION['produk'])) {
+    $_SESSION['produk'] = []; // Array produk: ['nama', 'harga', 'stok']
+}
+if (!isset($_SESSION['keranjang'])) {
+    $_SESSION['keranjang'] = []; // Array keranjang: ['nama', 'harga', 'jumlah', 'subtotal']
+}
+
+// Proses form jika POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+    
+    if ($action === 'tambah_produk') {
+        $nama = trim($_POST['nama'] ?? '');
+        $harga = (float)($_POST['harga'] ?? 0);
+        $stok = (int)($_POST['stok'] ?? 0);
+        if (!empty($nama) && $harga > 0 && $stok > 0) {
+            $_SESSION['produk'][] = ['nama' => $nama, 'harga' => $harga, 'stok' => $stok];
+            $pesan = "Produk berhasil ditambahkan!";
+        } else {
+            $pesan = "Input tidak valid!";
+        }
+    } elseif ($action === 'tambah_keranjang') {
+        $nama = trim($_POST['nama_produk'] ?? '');
+        $jumlah = (int)($_POST['jumlah'] ?? 1);
+        // Cari produk
+        $produk = null;
+        foreach ($_SESSION['produk'] as $p) {
+            if ($p['nama'] === $nama) {
+                $produk = $p;
+                break;
+            }
+        }
+        if ($produk && $jumlah > 0 && $produk['stok'] >= $jumlah) {
+            $subtotal = $produk['harga'] * $jumlah;
+            $_SESSION['keranjang'][] = ['nama' => $nama, 'harga' => $produk['harga'], 'jumlah' => $jumlah, 'subtotal' => $subtotal];
+            // Kurangi stok
+            foreach ($_SESSION['produk'] as &$p) {
+                if ($p['nama'] === $nama) {
+                    $p['stok'] -= $jumlah;
+                    break;
+                }
+            }
+            $pesan = "Produk ditambahkan ke keranjang!";
+        } else {
+            $pesan = "Stok tidak cukup atau input salah!";
+        }
+    } elseif ($action === 'hapus_keranjang') {
+        $index = (int)($_POST['index'] ?? -1);
+        if ($index >= 0 && isset($_SESSION['keranjang'][$index])) {
+            $item = $_SESSION['keranjang'][$index];
+            // Kembalikan stok
+            foreach ($_SESSION['produk'] as &$p) {
+                if ($p['nama'] === $item['nama']) {
+                    $p['stok'] += $item['jumlah'];
+                    break;
+                }
+            }
+            array_splice($_SESSION['keranjang'], $index, 1);
+            $pesan = "Item dihapus dari keranjang!";
+        }
+    } elseif ($action === 'bayar') {
+        $diskon = (float)($_POST['diskon'] ?? 0);
+        $pajak = (float)($_POST['pajak'] ?? 0);
+        $bayar = (float)($_POST['bayar'] ?? 0);
+        $total = array_sum(array_column($_SESSION['keranjang'], 'subtotal'));
+        $total_diskon = $total * ($diskon / 100);
+        $total_pajak = ($total - $total_diskon) * ($pajak / 100);
+        $grand_total = $total - $total_diskon + $total_pajak;
+        if ($bayar >= $grand_total) {
+            $kembalian = $bayar - $grand_total;
+            $_SESSION['struk'] = [
+                'keranjang' => $_SESSION['keranjang'],
+                'total' => $total,
+                'diskon' => $total_diskon,
+                'pajak' => $total_pajak,
+                'grand_total' => $grand_total,
+                'bayar' => $bayar,
+                'kembalian' => $kembalian
+            ];
+            $_SESSION['keranjang'] = []; // Reset keranjang
+            $pesan = "Pembayaran berhasil! Lihat struk.";
+        } else {
+            $pesan = "Uang bayar kurang!";
+        }
+    }
+    
+    // Redirect untuk hindari resubmit
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// Hitung total keranjang untuk display
+$total_keranjang = array_sum(array_column($_SESSION['keranjang'], 'subtotal'));
+?>
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kasir Grosir</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .container { max-width: 1200px; margin-top: 20px; }
+        .alert { margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .table-container { max-height: 300px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Kasir Grosir</h1>
+        
+        <!-- Pesan -->
+        <?php if (isset($pesan)): ?>
+            <div class="alert alert-info"><?php echo htmlspecialchars($pesan); ?></div>
+        <?php endif; ?>
+        
+        <div class="row">
+            <!-- Manajemen Produk -->
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-header">Tambah Produk</div>
+                    <div class="card-body">
+                        <form method="POST">
+                            <input type="hidden" name="action" value="tambah_produk">
+                            <div class="mb-3">
+                                <label for="nama" class="form-label">Nama Produk</label>
+                                <input type="text" class="form-control" id="nama" name="nama" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="harga" class="form-label">Harga</label>
+                                <input type="number" class="form-control" id="harga" name="harga" step="0.01" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="stok" class="form-label">Stok</label>
+                                <input type="number" class="form-control" id="stok" name="stok" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Tambah Produk</button>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Daftar Produk -->
+                <div class="card">
+                    <div class="card-header">Daftar Produk</div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <?php if (empty($_SESSION['produk'])): ?>
+                                <p class="text-muted">Belum ada produk.</p>
+                            <?php else: ?>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Nama</th>
+                                            <th>Harga</th>
+                                            <th>Stok</th>
+                                            <th>Aksi</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($_SESSION['produk'] as $index => $p): ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($p['nama']); ?></td>
+                                                <td>Rp <?php echo number_format($p['harga'], 0, ',', '.'); ?></td>
+                                                <td><?php echo $p['stok']; ?></td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-success" onclick="tambahKeKeranjang('<?php echo addslashes($p['nama']); ?>')">Tambah</button>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Keranjang dan Pembayaran -->
+            <div class="col-md-8">
+                <!-- Keranjang -->
+                <div class="card mb-4">
+                    <div class="card-header">Keranjang Belanja</div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <?php if (empty($_SESSION['keranjang'])): ?>
+                                <p class="text-muted">Keranjang kosong.</p>
+                            <?php else: ?>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Nama</th>
+                                            <th>Harga</th>
+                                            <th>Jumlah</th>
+                                            <th>Subtotal</th>
+                                            <th>Aksi</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($_SESSION['keranjang'] as $index => $item): ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($item['nama']); ?></td>
+                                                <td>Rp <?php echo number_format($item['harga'], 0, ',', '.'); ?></td>
+                                                <td><?php echo $item['jumlah']; ?></td>
+                                                <td>Rp <?php echo number_format($item['subtotal'], 0, ',', '.'); ?></td>
+                                                <td>
+                                                    <form method="POST" style="display:inline;">
+                                                        <input type="hidden" name="action" value="hapus_keranjang">
+                                                        <input type="hidden" name="index" value="<?php echo $index; ?>">
+                                                        <button type="submit" class="btn btn-sm btn-danger">Hapus</button>
+                                                    </form>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                                <p class="mt-3"><strong>Total: Rp <?php echo number_format($total_keranjang, 0, ',', '.'); ?></strong></p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Pembayaran -->
+                <div class="card">
+                    <div class="card-header">Pembayaran</div>
+                    <div class="card-body">
+                        <form method="POST" id="bayarForm">
+                            <input type="hidden" name="action" value="bayar">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <label for="diskon" class="form-label">Diskon (%)</label>
+                                    <input type="number" class="form-control" id="diskon" name="diskon" value="0" step="0.01">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="pajak" class="form-label">Pajak (%)</label>
+                                    <input type="number" class="form-control" id="pajak" name="pajak" value="0" step="0.01">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="bayar" class="form-label">Bayar</label>
+                                    <input type="number" class="form-control" id="bayar" name="bayar" step="0.01" required>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">&nbsp;</label>
+                                    <button type="submit" class="btn btn-success w-100">Bayar</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Struk (jika ada) -->
+                <?php if (isset($_SESSION['struk'])): ?>
+                    <div class="card mt-4">
+                        <div class="card-header">Struk Pembayaran</div>
+                        <div class="card-body">
+                            <pre><?php
+                                $s = $_SESSION['struk'];
+                                echo "Kasir Grosir\n";
+                                echo "================\n";
+                                foreach ($s['keranjang'] as $item) {
+                                    echo htmlspecialchars($item['nama']) . " x" . $item['jumlah'] . " = Rp " . number_format($item['subtotal'], 0, ',', '.') . "\n";
+                                }
+                                echo "Total: Rp " . number_format($s['total'], 0, ',', '.') . "\n";
+                                echo "Diskon: Rp " . number_format($s['diskon'], 0, ',', '.') . "\n";
+                                echo "Pajak: Rp " . number_format($s['pajak'], 0, ',', '.') . "\n";
+                                echo "Grand Total: Rp " . number_format($s['grand_total'], 0, ',', '.') . "\n";
+                                echo "Bayar: Rp " . number_format($s['bayar'], 0, ',', '.') . "\n";
+                                echo "Kembalian: Rp " . number_format($s['kembalian'], 0, ',', '.') . "\n";
+                                unset($_SESSION['struk']); // Hapus setelah tampil
+                            ?></pre>
+                            <button class="btn btn-primary" onclick="window.print()">Cetak Struk</button>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal untuk Tambah ke Keranjang -->
+    <div class="modal fade" id="keranjangModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Tambah ke Keranjang</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form method="POST" id="keranjangForm">
+                        <input type="hidden" name="action" value="tambah_keranjang">
+                        <input type="hidden" name="nama_produk" id="nama_produk">
+                        <div class="mb-3">
+                            <label for="jumlah" class="form-label">Jumlah</label>
+                            <input type="number" class="form-control" id="jumlah" name="jumlah" value="1" min="1" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Tambah</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Fungsi tambah ke keranjang
+        function tambahKeKeranjang(nama) {
+            document.getElementById('nama_produk').value = nama;
+            new bootstrap.Modal(document.getElementById('keranjangModal')).show();
+        }
+
+        // Update total real-time
+        document.getElementById('diskon').addEventListener('input', updateTotal);
+        document.getElementById('pajak').addEventListener('input', updateTotal);
+        function updateTotal() {
+            const diskon = parseFloat(document.getElementById('diskon').value) || 0;
+            const pajak = parseFloat(document.getElementById('pajak').value) || 0;
+            const total = <?php echo $total_keranjang; ?>;
+            const totalDiskon = total * (diskon / 100);
+            const totalPajak = (total - totalDiskon) * (pajak / 100);
+            const grandTotal = total - totalDiskon + totalPajak;
+            // Tampilkan di console atau alert untuk demo
+            console.log('Grand Total: Rp ' + grandTotal.toLocaleString('id-ID'));
+        }
+    </script>
+</body>
+</html>
